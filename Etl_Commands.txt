@@ -25,11 +25,12 @@ Now Connect to instance
 7.	source airflow_venv/bin/activate
 8.	pip install pandas 
 9.	pip install s3fs
-10.	pip install apache-airflow
-11.	pip install --upgrade awscli 
-12.	aws configure 
-13.	aws sts get-session-token
-14.	airflow standalone
+10.	pip install WTForms==2.3.3
+11.	pip install apache-airflow
+12.	pip install --upgrade awscli 
+13.	aws configure 
+14.	aws sts get-session-token
+15.	airflow standalone
 
 Connect Airflow
  
