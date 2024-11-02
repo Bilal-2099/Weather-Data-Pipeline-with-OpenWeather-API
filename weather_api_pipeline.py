@@ -69,7 +69,7 @@ default_args = {
     'owner': 'airflow',
     'depends_on_past': False,
     'start_date': datetime(2023, 1, 8),
-    'email': ['smaadil688@gmail.com'],
+    'email': ['myemail@domain.com'],
     'email_on_failure': False,
     'email_on_retry': False,
     'retries': 2,
@@ -83,11 +83,11 @@ with DAG('weather_dag_2',
         catchup=False) as dag:
 
         start_pipeline = DummyOperator(
-            task_id = 'tsk_start_pipeline_ad'
+            task_id = 'tsk_start_pipeline'
         )
 
         join_data = PostgresOperator(
-                task_id='task_join_data_ad',
+                task_id='task_join_data',
                 postgres_conn_id = "postgres_conn",
                 sql= '''SELECT 
                     w.city,                    
@@ -113,17 +113,17 @@ with DAG('weather_dag_2',
             )
 
         load_joined_data = PythonOperator(
-            task_id= 'task_load_joined_data_ad',
+            task_id= 'task_load_joined_data',
             python_callable=save_joined_data_s3
             )
 
         end_pipeline = DummyOperator(
-                task_id = 'task_end_pipeline_ad'
+                task_id = 'task_end_pipeline'
         )
 
         with TaskGroup(group_id = 'group_a', tooltip= "Extract_from_S3_and_weatherapi") as group_A:
             create_table_1 = PostgresOperator(
-                task_id='tsk_create_table_1_ad',
+                task_id='tsk_create_table_1',
                 postgres_conn_id = "postgres_conn",
                 sql= '''  
                     CREATE TABLE IF NOT EXISTS city_look_up (
@@ -136,20 +136,20 @@ with DAG('weather_dag_2',
             )
 
             truncate_table = PostgresOperator(
-                task_id='tsk_truncate_table_ad',
+                task_id='tsk_truncate_table',
                 postgres_conn_id = "postgres_conn",
                 sql= ''' TRUNCATE TABLE city_look_up;
                     '''
             )
 
             uploadS3_to_postgres  = PostgresOperator(
-                task_id = "tsk_uploadS3_to_postgres_ad",
+                task_id = "tsk_uploadS3_to_postgres",
                 postgres_conn_id = "postgres_conn",
-                sql = "SELECT aws_s3.table_import_from_s3('city_look_up', '', '(format csv, DELIMITER '','', HEADER true)', 'rds-pipeline-bucket-ad', 'us_city.csv', 'us-east-1');"
+                sql = "SELECT aws_s3.table_import_from_s3('city_look_up', '', '(format csv, DELIMITER '','', HEADER true)', 'testing-ymlo', 'us_city.csv', 'us-west-2');"
             )
 
             create_table_2 = PostgresOperator(
-                task_id='tsk_create_table_2_ad',
+                task_id='tsk_create_table_2',
                 postgres_conn_id = "postgres_conn",
                 sql= ''' 
                     CREATE TABLE IF NOT EXISTS weather_data (
@@ -170,27 +170,27 @@ with DAG('weather_dag_2',
             )
 
             is_houston_weather_api_ready = HttpSensor(
-                task_id ='tsk_is_houston_weather_api_ready_ad',
+                task_id ='tsk_is_houston_weather_api_ready',
                 http_conn_id='weathermap_api',
-                endpoint='/data/2.5/weather?q=houston&APPID=6642c8738114d9869f9e56679fc25816'
+                endpoint='/data/2.5/weather?q=houston&APPID=3ef58669dda93f129d53eff4e6346905'
             )
 
             extract_houston_weather_data = SimpleHttpOperator(
-                task_id = 'tsk_extract_houston_weather_data_ad',
+                task_id = 'tsk_extract_houston_weather_data',
                 http_conn_id = 'weathermap_api',
-                endpoint='/data/2.5/weather?q=houston&APPID=6642c8738114d9869f9e56679fc25816',
+                endpoint='/data/2.5/weather?q=houston&APPID=3ef58669dda93f129d53eff4e6346905',
                 method = 'GET',
                 response_filter= lambda r: json.loads(r.text),
                 log_response=True
             )
 
             transform_load_houston_weather_data = PythonOperator(
-                task_id= 'transform_load_houston_weather_data_ad',
+                task_id= 'transform_load_houston_weather_data',
                 python_callable=transform_load_data
             )
 
             load_weather_data = PythonOperator(
-            task_id= 'tsk_load_weather_data_ad',
+            task_id= 'tsk_load_weather_data',
             python_callable=load_weather
             )
 
