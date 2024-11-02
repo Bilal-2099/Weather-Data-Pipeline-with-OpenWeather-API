@@ -1,99 +1,100 @@
 from airflow import DAG
 from datetime import timedelta, datetime
 from airflow.providers.http.sensors.http import HttpSensor
-import json
 from airflow.providers.http.operators.http import SimpleHttpOperator
 from airflow.operators.python import PythonOperator
+from airflow.providers.amazon.aws.hooks.s3 import S3Hook
+import json
 import pandas as pd
+import os
 
-
-
-
-def kelvin_to_fahrenheit(temp_in_kelvin):
-    temp_in_fahrenheit = (temp_in_kelvin - 273.15) * (9/5) + 32
-    return temp_in_fahrenheit
-
-
-def transform_load_data(task_instance):
+# Function to save weather data to a CSV file
+def save_weather_data_to_csv(task_instance):
     data = task_instance.xcom_pull(task_ids="extract_weather_data")
-    city = data["name"]
-    weather_description = data["weather"][0]['description']
-    temp_farenheit = kelvin_to_fahrenheit(data["main"]["temp"])
-    feels_like_farenheit= kelvin_to_fahrenheit(data["main"]["feels_like"])
-    min_temp_farenheit = kelvin_to_fahrenheit(data["main"]["temp_min"])
-    max_temp_farenheit = kelvin_to_fahrenheit(data["main"]["temp_max"])
-    pressure = data["main"]["pressure"]
-    humidity = data["main"]["humidity"]
-    wind_speed = data["wind"]["speed"]
-    time_of_record = datetime.utcfromtimestamp(data['dt'] + data['timezone'])
-    sunrise_time = datetime.utcfromtimestamp(data['sys']['sunrise'] + data['timezone'])
-    sunset_time = datetime.utcfromtimestamp(data['sys']['sunset'] + data['timezone'])
 
-    transformed_data = {"City": city,
-                        "Description": weather_description,
-                        "Temperature (F)": temp_farenheit,
-                        "Feels Like (F)": feels_like_farenheit,
-                        "Minimun Temp (F)":min_temp_farenheit,
-                        "Maximum Temp (F)": max_temp_farenheit,
-                        "Pressure": pressure,
-                        "Humidty": humidity,
-                        "Wind Speed": wind_speed,
-                        "Time of Record": time_of_record,
-                        "Sunrise (Local Time)":sunrise_time,
-                        "Sunset (Local Time)": sunset_time                        
-                        }
-    transformed_data_list = [transformed_data]
-    df_data = pd.DataFrame(transformed_data_list)
-    aws_credentials = {"key": "Access_Key", "secret": "Secret_Key", "token": "xxxxxxxxxxxxxx"}
+    # Check if the data is available
+    if data is None:
+        raise ValueError("No data retrieved from the API.")
 
+    # Prepare the directory to save the CSV
+    os.makedirs('data', exist_ok=True)
+
+    # Create a DataFrame from the API response
+    transformed_data = {
+        "City": data["name"],
+        "Description": data["weather"][0]['description'],
+        "Temperature (K)": data["main"]["temp"],
+        "Feels Like (K)": data["main"]["feels_like"],
+        "Min Temperature (K)": data["main"]["temp_min"],
+        "Max Temperature (K)": data["main"]["temp_max"],
+        "Pressure": data["main"]["pressure"],
+        "Humidity": data["main"]["humidity"],
+        "Wind Speed": data["wind"]["speed"],
+        "Time of Record": datetime.utcfromtimestamp(data['dt']),
+        "Sunrise": datetime.utcfromtimestamp(data['sys']['sunrise']),
+        "Sunset": datetime.utcfromtimestamp(data['sys']['sunset']),
+    }
+    
+    # Create DataFrame and save it as a CSV
+    df_data = pd.DataFrame([transformed_data])  # Ensure it is a list of dicts
     now = datetime.now()
-    dt_string = now.strftime("%d%m%Y%H%M%S")
-    dt_string = 'current_weather_data_portland_' + dt_string
-    df_data.to_csv(f"s3://S3_Bucket_Name/{dt_string}.csv", index=False, storage_options=aws_credentials)
+    dt_string = now.strftime("%Y%m%d%H%M%S")
+    filename = f"data/current_weather_data_{dt_string}.csv"
+    df_data.to_csv(filename, index=False)
 
+    return filename  # Return the filename for the next task
 
+# Function to upload the CSV file to S3
+def upload_csv_to_s3(local_file):
+    bucket_name = 'S3_Bucket_Name'  # Replace with your actual S3 bucket name
+    object_name = os.path.basename(local_file)  # Just the filename, no folder structure
 
+    s3_hook = S3Hook(aws_conn_id='aws_default')  # Make sure to configure your Airflow connection for AWS
+    s3_hook.load_file(filename=local_file, key=object_name, bucket_name=bucket_name, replace=True)
+
+# Define default_args for the DAG
 default_args = {
     'owner': 'airflow',
     'depends_on_past': False,
-    'start_date': datetime(2024, 10, 29),
+    'start_date': datetime(2024, 11, 2),
     'email': ['myemail@domain.com'],
     'email_on_failure': False,
     'email_on_retry': False,
-    'retries': 2,
-    'retry_delay': timedelta(minutes=2)
+    'retries': 1,
+    'retry_delay': timedelta(minutes=1)
 }
 
+# Create the DAG
+with DAG('weather_data_pipeline',
+         default_args=default_args,
+         schedule_interval='@daily',
+         catchup=False) as dag:
 
-
-with DAG('weather_dag',
-        default_args=default_args,
-        schedule_interval = '@daily',
-        catchup=False) as dag:
-
-
-        is_weather_api_ready = HttpSensor(
-        task_id ='is_weather_api_ready',
+    is_weather_api_ready = HttpSensor(
+        task_id='is_weather_api_ready',
         http_conn_id='weathermap_api',
-        endpoint='/data/2.5/weather?q=Portland&APPID=API Key'
-        )
+        endpoint='/data/2.5/weather?q=Portland&appid=API_Key',  # Replace with your actual API key
+    )
 
-
-        extract_weather_data = SimpleHttpOperator(
-        task_id = 'extract_weather_data',
-        http_conn_id = 'weathermap_api',
-        endpoint='/data/2.5/weather?q=Portland&APPID=API Key',
-        method = 'GET',
-        response_filter= lambda r: json.loads(r.text),
+    extract_weather_data = SimpleHttpOperator(
+        task_id='extract_weather_data',
+        http_conn_id='weathermap_api',
+        endpoint='/data/2.5/weather?q=Portland&appid=API_Key',  # Replace with your actual API key
+        method='GET',
+        response_filter=lambda r: json.loads(r.text),
         log_response=True
-        )
+    )
 
-        transform_load_weather_data = PythonOperator(
-        task_id= 'transform_load_weather_data',
-        python_callable=transform_load_data
-        )
+    save_weather_data = PythonOperator(
+        task_id='save_weather_data',
+        python_callable=save_weather_data_to_csv
+    )
 
+    upload_task = PythonOperator(
+        task_id='upload_csv_to_s3',
+        python_callable=upload_csv_to_s3,
+        op_kwargs={'local_file': "{{ task_instance.xcom_pull(task_ids='save_weather_data') }}"}  # Pull the filename from the previous task
+    )
 
-
-
-        is_weather_api_ready >> extract_weather_data >> transform_load_weather_data
+    # Set task dependencies
+    is_weather_api_ready >> extract_weather_data >> save_weather_data >> upload_task
